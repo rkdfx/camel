@@ -17,7 +17,9 @@
 package org.apache.camel.component.clickup.util;
 
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,12 +55,11 @@ public class ClickUpMockRoutes extends RouteBuilder {
 
     @Override
     public void configure() {
-
-        mocks.forEach(processor -> from(
-                "netty-http:http://localhost:" + port + "/clickup-api-mock/" + processor.path + "?httpMethodRestrict="
-                                        + processor.method + (processor.pathExactMatch ? "" : "&matchOnUriPrefix=true"))
+        mocks.forEach(processor -> fromF(
+                "netty-http:http://localhost:%d/clickup-api-mock/%s?httpMethodRestrict=%s%s",
+                port, processor.path, processor.method,
+                processor.pathExactMatch ? "" : "&matchOnUriPrefix=true")
                 .process(processor));
-
     }
 
     public static class MockProcessor<T> implements Processor {

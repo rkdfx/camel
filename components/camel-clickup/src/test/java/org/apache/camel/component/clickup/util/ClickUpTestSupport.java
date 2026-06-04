@@ -18,18 +18,30 @@ package org.apache.camel.component.clickup.util;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.camel.CamelContext;
 import org.apache.camel.component.clickup.ClickUpComponent;
 import org.apache.camel.test.AvailablePortFinder;
 import org.apache.camel.test.junit6.CamelTestSupport;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 /**
  * A support test class for ClickUp tests.
  */
 public class ClickUpTestSupport extends CamelTestSupport {
+
+    protected static final Long WORKSPACE_ID = 12345L;
+    protected static final String AUTHORIZATION_TOKEN = "mock-authorization-token";
+    protected static final String WEBHOOK_SECRET = "mock-webhook-secret";
+    protected static final Set<String> EVENTS = Set.of("taskTimeTrackedUpdated");
 
     @RegisterExtension
     protected static AvailablePortFinder.Port port = AvailablePortFinder.find();
@@ -73,6 +85,23 @@ public class ClickUpTestSupport extends CamelTestSupport {
 
     protected ClickUpMockRoutes createMockRoutes() {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Blocks until the mocked ClickUp API health endpoint is reachable, so that tests do not start interacting with the
+     * mock before its routes are ready.
+     */
+    protected static void waitForClickUpMockAPI() {
+        Awaitility.await()
+                .atMost(5, TimeUnit.SECONDS)
+                .until(() -> {
+                    HttpClient client = HttpClient.newBuilder().build();
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create("http://localhost:" + port + "/clickup-api-mock/health")).GET().build();
+
+                    final HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+                    return response.statusCode() == 200;
+                });
     }
 
 }

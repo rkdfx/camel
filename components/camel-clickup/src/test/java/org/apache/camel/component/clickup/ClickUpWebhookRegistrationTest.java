@@ -18,134 +18,56 @@ package org.apache.camel.component.clickup;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.clickup.model.WebhookCreationCommand;
+import org.apache.camel.component.clickup.util.ClickUpMockApiTestSupport;
 import org.apache.camel.component.clickup.util.ClickUpMockRoutes;
-import org.apache.camel.component.clickup.util.ClickUpTestSupport;
-import org.apache.camel.impl.DefaultCamelContext;
-import org.apache.camel.test.junit6.TestExecutionConfiguration;
-import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
-public class ClickUpWebhookRegistrationTest extends ClickUpTestSupport {
-
-    private final static Long WORKSPACE_ID = 12345L;
-    private final static String AUTHORIZATION_TOKEN = "mock-authorization-token";
-    private final static String WEBHOOK_SECRET = "mock-webhook-secret";
-    private final static Set<String> EVENTS = new HashSet<>(List.of("taskTimeTrackedUpdated"));
+public class ClickUpWebhookRegistrationTest extends ClickUpMockApiTestSupport {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     public static final String WEBHOOK_CREATED_JSON = "messages/webhook-created.json";
 
-    @Override
-    public void configureTest(TestExecutionConfiguration testExecutionConfiguration) {
-        super.configureTest(testExecutionConfiguration);
-
-        testExecutionConfiguration.withUseRouteBuilder(false);
-    }
-
     @Test
     public void testAutomaticRegistration() throws Exception {
-        final ClickUpMockRoutes.MockProcessor<String> mockProcessor
+        final ClickUpMockRoutes.MockProcessor<String> creationMock
                 = getMockRoutes().getMock("POST", "team/" + WORKSPACE_ID + "/webhook");
-        mockProcessor.clearRecordedMessages();
 
-        try (final DefaultCamelContext mockContext = new DefaultCamelContext()) {
-            mockContext.addRoutes(getMockRoutes());
-            mockContext.start();
+        context().start();
 
-            waitForClickUpMockAPI();
-
-            setupContextRoutes();
-
-            context().start();
-
-            final List<String> recordedMessages = mockProcessor.awaitRecordedMessages(1, 5000);
-            assertEquals(1, recordedMessages.size());
-            String recordedMessage = recordedMessages.get(0);
-
-            try {
-                WebhookCreationCommand command = MAPPER.readValue(recordedMessage, WebhookCreationCommand.class);
-
-                assertInstanceOf(WebhookCreationCommand.class, command);
-            } catch (IOException e) {
-                throw new AssertionError("Failed to parse recorded message", e);
-            }
-
-            mockProcessor.clearRecordedMessages();
-
-            context().stop();
-        }
+        assertWebhookCreationRequested(creationMock);
     }
 
     @Test
     public void testAutomaticUnregistration() throws Exception {
-        final ClickUpMockRoutes.MockProcessor<String> mockProcessor = getMockRoutes().getMock("DELETE", "webhook/");
-        mockProcessor.clearRecordedMessages();
+        final ClickUpMockRoutes.MockProcessor<String> deletionMock = getMockRoutes().getMock("DELETE", "webhook/");
 
-        try (final DefaultCamelContext mockContext = new DefaultCamelContext()) {
-            mockContext.addRoutes(getMockRoutes());
-            mockContext.start();
+        context().start();
+        context().stop();
 
-            waitForClickUpMockAPI();
-
-            setupContextRoutes();
-
-            context().start();
-
-            context().stop();
-
-            {
-                final List<String> readRecordedMessages = mockProcessor.awaitRecordedMessages(1, 5000);
-                assertEquals(1, readRecordedMessages.size());
-                String webhookDeleteMessage = readRecordedMessages.get(0);
-
-                assertEquals("", webhookDeleteMessage);
-
-                mockProcessor.clearRecordedMessages();
-            }
-        }
+        assertWebhookDeletionRequested(deletionMock);
     }
 
-    private static void waitForClickUpMockAPI() {
-        /* Make sure the ClickUp mock API is up and running */
-        Awaitility.await()
-                .atMost(5, TimeUnit.SECONDS)
-                .until(() -> {
-                    HttpClient client = HttpClient.newBuilder().build();
-                    HttpRequest request = HttpRequest.newBuilder()
-                            .uri(URI.create("http://localhost:" + port + "/clickup-api-mock/health")).GET().build();
+    private static void assertWebhookCreationRequested(ClickUpMockRoutes.MockProcessor<String> creationMock) {
+        final List<String> recordedMessages = creationMock.awaitRecordedMessages(1, 5000);
+        assertEquals(1, recordedMessages.size());
 
-                    final HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-                    return response.statusCode() == 200;
-                });
+        final String recordedMessage = recordedMessages.get(0);
+        assertDoesNotThrow(() -> assertInstanceOf(WebhookCreationCommand.class,
+                MAPPER.readValue(recordedMessage, WebhookCreationCommand.class)));
     }
 
-    private void setupContextRoutes() throws Exception {
-        context().addRoutes(new RouteBuilder() {
-            @Override
-            public void configure() {
-                String apiMockBaseUrl = "http://localhost:" + port + "/clickup-api-mock";
-
-                from("webhook:clickup:" + WORKSPACE_ID + "?authorizationToken=" + AUTHORIZATION_TOKEN + "&webhookSecret="
-                     + WEBHOOK_SECRET + "&events=" + String.join(",", EVENTS) + "&webhookAutoRegister=true&baseUrl="
-                     + apiMockBaseUrl)
-                        .id("webhook")
-                        .to("mock:endpoint");
-            }
-        });
+    private static void assertWebhookDeletionRequested(ClickUpMockRoutes.MockProcessor<String> deletionMock) {
+        final List<String> recordedMessages = deletionMock.awaitRecordedMessages(1, 5000);
+        assertEquals(1, recordedMessages.size());
+        assertEquals("", recordedMessages.get(0));
     }
 
     @Override

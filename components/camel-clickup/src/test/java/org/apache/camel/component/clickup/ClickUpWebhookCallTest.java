@@ -17,7 +17,8 @@
 package org.apache.camel.component.clickup;
 
 import java.io.InputStream;
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.apache.camel.Exchange;
 import org.apache.camel.RoutesBuilder;
@@ -25,20 +26,10 @@ import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.component.clickup.model.TaskTimeTrackedUpdatedEvent;
 import org.apache.camel.component.clickup.util.ClickUpTestSupport;
 import org.apache.camel.component.mock.MockEndpoint;
-import org.apache.camel.component.webhook.WebhookConfiguration;
 import org.apache.camel.component.webhook.WebhookEndpoint;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class ClickUpWebhookCallTest extends ClickUpTestSupport {
-
-    private final static Logger LOGGER = LoggerFactory.getLogger(ClickUpWebhookCallTest.class);
-
-    private final static Long WORKSPACE_ID = 12345L;
-    private final static String AUTHORIZATION_TOKEN = "mock-authorization-token";
-    private final static String WEBHOOK_SECRET = "mock-webhook-secret";
-    private final static Set<String> EVENTS = new HashSet<>(List.of("taskTimeTrackedUpdated"));
 
     public static final String MESSAGES_EVENTS_TIME_TRACKING_CREATED_FILENAME = "messages/events/time-tracking-created.json";
     public static final String MESSAGES_EVENTS_TIME_TRACKING_CREATED_SIGNATURE
@@ -46,26 +37,27 @@ public class ClickUpWebhookCallTest extends ClickUpTestSupport {
 
     @Test
     public void testWebhookCall() throws Exception {
-        WebhookConfiguration config
-                = ((WebhookEndpoint) context().getRoute("webhook").getConsumer().getEndpoint()).getConfiguration();
-        String url = config.computeFullExternalUrl();
+        MockEndpoint mock = getMockEndpoint("mock:endpoint");
+        mock.expectedMessageCount(1);
+        mock.expectedMessagesMatches(exchange -> exchange.getIn().getBody() instanceof TaskTimeTrackedUpdatedEvent);
 
-        LOGGER.info("Webhook external url: {}", url);
+        sendSignedWebhookEvent(MESSAGES_EVENTS_TIME_TRACKING_CREATED_FILENAME,
+                MESSAGES_EVENTS_TIME_TRACKING_CREATED_SIGNATURE);
 
-        try (InputStream content
-                = getClass().getClassLoader().getResourceAsStream(MESSAGES_EVENTS_TIME_TRACKING_CREATED_FILENAME)) {
-            LOGGER.info("message content: {}", content);
+        mock.assertIsSatisfied();
+    }
 
-            MockEndpoint mock = getMockEndpoint("mock:endpoint");
-            mock.expectedMessageCount(1);
-            mock.expectedMessagesMatches(exchange -> exchange.getIn().getBody() instanceof TaskTimeTrackedUpdatedEvent);
+    private void sendSignedWebhookEvent(String payloadResource, String signature) throws Exception {
+        String webhookUrl = ((WebhookEndpoint) context().getRoute("webhook").getConsumer().getEndpoint())
+                .getConfiguration().computeFullExternalUrl();
 
+        try (InputStream payload = getClass().getClassLoader().getResourceAsStream(payloadResource)) {
             Map<String, Object> headers = new HashMap<>();
             headers.put(Exchange.HTTP_METHOD, "POST");
             headers.put(Exchange.CONTENT_TYPE, "application/json");
-            headers.put("x-signature", MESSAGES_EVENTS_TIME_TRACKING_CREATED_SIGNATURE);
-            template().sendBodyAndHeaders("netty-http:" + url, content, headers);
-            mock.assertIsSatisfied();
+            headers.put("x-signature", signature);
+
+            template().sendBodyAndHeaders("netty-http:" + webhookUrl, payload, headers);
         }
     }
 
@@ -78,8 +70,8 @@ public class ClickUpWebhookCallTest extends ClickUpTestSupport {
                         .host("localhost")
                         .port(port.getPort());
 
-                from("webhook:clickup:" + WORKSPACE_ID + "?authorizationToken=" + AUTHORIZATION_TOKEN + "&webhookSecret="
-                     + WEBHOOK_SECRET + "&events=" + String.join(",", EVENTS) + "&webhookAutoRegister=false")
+                fromF("webhook:clickup:%d?authorizationToken=%s&webhookSecret=%s&events=%s&webhookAutoRegister=false",
+                        WORKSPACE_ID, AUTHORIZATION_TOKEN, WEBHOOK_SECRET, String.join(",", EVENTS))
                         .id("webhook")
                         .to("mock:endpoint");
             }
