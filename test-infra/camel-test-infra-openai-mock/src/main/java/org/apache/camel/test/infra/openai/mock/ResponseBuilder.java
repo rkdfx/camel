@@ -34,6 +34,16 @@ import com.sun.net.httpserver.HttpExchange;
  * Builder class for creating different types of OpenAI API mock responses.
  */
 public class ResponseBuilder {
+
+    /**
+     * Deterministic token usage emitted on every chat completion response. Real OpenAI responses carry a {@code usage}
+     * object; emitting fixed counts here lets token-aware features (such as the agentic token budget) be exercised in
+     * tests without a live API. Tests can reference these constants to compute the expected cumulative usage.
+     */
+    public static final int MOCK_PROMPT_TOKENS = 10;
+    public static final int MOCK_COMPLETION_TOKENS = 5;
+    public static final int MOCK_TOTAL_TOKENS = MOCK_PROMPT_TOKENS + MOCK_COMPLETION_TOKENS;
+
     private final ObjectMapper objectMapper;
 
     public ResponseBuilder(ObjectMapper objectMapper) {
@@ -133,7 +143,16 @@ public class ResponseBuilder {
         chatCompletion.put("created", System.currentTimeMillis() / 1000L);
         chatCompletion.put("model", "openai-mock");
         chatCompletion.put("object", "chat.completion");
+        chatCompletion.put("usage", createUsage());
         return chatCompletion;
+    }
+
+    private Map<String, Object> createUsage() {
+        Map<String, Object> usage = new HashMap<>();
+        usage.put("prompt_tokens", MOCK_PROMPT_TOKENS);
+        usage.put("completion_tokens", MOCK_COMPLETION_TOKENS);
+        usage.put("total_tokens", MOCK_TOTAL_TOKENS);
+        return usage;
     }
 
     private List<Map<String, Object>> buildToolCallsList(List<ToolCallDefinition> toolCalls) throws Exception {

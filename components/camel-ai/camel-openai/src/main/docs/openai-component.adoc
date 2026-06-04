@@ -987,6 +987,19 @@ When the model responds with tool calls, the component automatically:
 
 The `maxToolIterations` option (default: 50) prevents infinite loops. If exceeded, an `IllegalStateException` is thrown.
 
+The `maxAgenticTokens` option provides an additional, cost-oriented safeguard: it caps the cumulative number of tokens
+(prompt + completion, summed across every iteration) the loop may consume. It is unset by default (unlimited). When the
+budget is exceeded the loop is halted before the next model call and an `IllegalStateException` is thrown, mirroring
+`maxToolIterations`. The cumulative usage is also exposed via the `CamelOpenAIAgentic*Tokens` headers (see below).
+
+[source,java]
+----
+from("direct:chat")
+    .to("openai:chat-completion?model=gpt-4"
+        + "&maxToolIterations=20"
+        + "&maxAgenticTokens=200000");
+----
+
 Set `autoToolExecution=false` to disable the agentic loop and receive raw tool calls in the message body instead:
 
 [source,java]
@@ -1109,6 +1122,9 @@ The following headers are set after the agentic loop completes:
 | `CamelOpenAIToolIterations` | Integer | Number of tool call iterations performed
 | `CamelOpenAIMcpToolCalls` | List<String> | Ordered list of tool names called during the loop
 | `CamelOpenAIMcpReturnDirect` | Boolean | `true` if the response came directly from a tool with `returnDirect`
+| `CamelOpenAIAgenticPromptTokens` | Long | Cumulative prompt tokens consumed across all iterations
+| `CamelOpenAIAgenticCompletionTokens` | Long | Cumulative completion tokens consumed across all iterations
+| `CamelOpenAIAgenticTotalTokens` | Long | Cumulative total tokens (prompt + completion) consumed across all iterations
 |===
 
 === Conversation Memory with MCP Tools
@@ -1224,6 +1240,7 @@ from("direct:chat")
 | MCP `CallToolResult.isError()` is true | Error content is sent as tool result text to the model
 | Tool name not found in any server | `IllegalStateException` is thrown
 | Max iterations exceeded | `IllegalStateException` is thrown with the tool call log
+| Token budget (`maxAgenticTokens`) exceeded | `IllegalStateException` is thrown with the cumulative token usage and tool call log
 | Streaming + MCP tools with autoToolExecution | Falls back to non-streaming (logged as INFO)
 |===
 

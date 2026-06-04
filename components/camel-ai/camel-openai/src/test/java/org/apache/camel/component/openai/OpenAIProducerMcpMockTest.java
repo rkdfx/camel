@@ -28,6 +28,7 @@ import io.modelcontextprotocol.spec.McpSchema;
 import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.test.infra.openai.mock.OpenAIMock;
+import org.apache.camel.test.infra.openai.mock.ResponseBuilder;
 import org.apache.camel.test.junit6.CamelTestSupport;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
@@ -91,6 +92,11 @@ public class OpenAIProducerMcpMockTest extends CamelTestSupport {
 
                 from("direct:mcp-chat-max1")
                         .to("openai:chat-completion?model=gpt-5&apiKey=dummy&autoToolExecution=true&maxToolIterations=1&baseUrl="
+                            + openAIMock.getBaseUrl() + "/v1");
+
+                // Budget of 20 tokens: a two-tool loop (15 tokens/response) crosses it on the second response
+                from("direct:mcp-chat-budget")
+                        .to("openai:chat-completion?model=gpt-5&apiKey=dummy&autoToolExecution=true&maxAgenticTokens=20&baseUrl="
                             + openAIMock.getBaseUrl() + "/v1");
             }
         };
@@ -322,5 +328,47 @@ public class OpenAIProducerMcpMockTest extends CamelTestSupport {
         assertEquals("I need to check the weather API for Tokyo",
                 result.getMessage().getHeader(OpenAIConstants.REASONING_CONTENT, String.class));
         assertEquals(1, result.getMessage().getHeader(OpenAIConstants.TOOL_ITERATIONS, Integer.class));
+    }
+
+    @Test
+    void agenticTokenHeadersAccumulateAcrossIterations() {
+        String endpointUri = "openai:chat-completion?model=gpt-5&apiKey=dummy&autoToolExecution=true&baseUrl="
+                             + openAIMock.getBaseUrl() + "/v1";
+
+        Map<String, McpSyncClient> toolClients = new HashMap<>();
+        toolClients.put("get_weather", createMockMcpClient("get_weather", "Sunny, 22°C"));
+        injectMcpTools(endpointUri, toolClients);
+
+        // "call one tool" => one tool-call response + one final response = 2 model responses
+        Exchange result = template.request("direct:mcp-chat", e -> e.getIn().setBody("call one tool"));
+
+        assertEquals("The weather in London is sunny.", result.getMessage().getBody(String.class));
+        assertEquals(2L * ResponseBuilder.MOCK_PROMPT_TOKENS,
+                result.getMessage().getHeader(OpenAIConstants.AGENTIC_PROMPT_TOKENS, Long.class));
+        assertEquals(2L * ResponseBuilder.MOCK_COMPLETION_TOKENS,
+                result.getMessage().getHeader(OpenAIConstants.AGENTIC_COMPLETION_TOKENS, Long.class));
+        assertEquals(2L * ResponseBuilder.MOCK_TOTAL_TOKENS,
+                result.getMessage().getHeader(OpenAIConstants.AGENTIC_TOTAL_TOKENS, Long.class));
+    }
+
+    @Test
+    void maxAgenticTokensBudgetExceededThrows() {
+        String endpointUri
+                = "openai:chat-completion?model=gpt-5&apiKey=dummy&autoToolExecution=true&maxAgenticTokens=20&baseUrl="
+                  + openAIMock.getBaseUrl() + "/v1";
+
+        Map<String, McpSyncClient> toolClients = new HashMap<>();
+        toolClients.put("find_location", createMockMcpClient("find_location", "48.8566, 2.3522"));
+        toolClients.put("get_weather", createMockMcpClient("get_weather", "Cloudy, 15°C"));
+        injectMcpTools(endpointUri, toolClients);
+
+        // "call two tools" consumes 15 tokens/response; the cumulative total passes the 20-token budget
+        // on the second response, halting the loop before the final model call.
+        Exchange result = template.request("direct:mcp-chat-budget", e -> e.getIn().setBody("call two tools"));
+
+        IllegalStateException exception = result.getException(IllegalStateException.class);
+        assertNotNull(exception, "Expected the agentic loop to fail once the token budget was exceeded");
+        assertTrue(exception.getMessage().contains("Max agentic tokens (20) exceeded"),
+                "Unexpected exception message: " + exception.getMessage());
     }
 }

@@ -73,6 +73,16 @@ public final class OpenAIConstants {
     // MCP Tool Call Headers
     @Metadata(description = "Number of tool call iterations performed in the agentic loop", javaType = "Integer")
     public static final String TOOL_ITERATIONS = "CamelOpenAIToolIterations";
+    @Metadata(description = "Cumulative number of prompt tokens consumed across all agentic loop iterations",
+              javaType = "Long")
+    public static final String AGENTIC_PROMPT_TOKENS = "CamelOpenAIAgenticPromptTokens";
+    @Metadata(description = "Cumulative number of completion tokens consumed across all agentic loop iterations",
+              javaType = "Long")
+    public static final String AGENTIC_COMPLETION_TOKENS = "CamelOpenAIAgenticCompletionTokens";
+    @Metadata(description = "Cumulative total number of tokens (prompt and completion combined) consumed across all "
+                            + "agentic loop iterations",
+              javaType = "Long")
+    public static final String AGENTIC_TOTAL_TOKENS = "CamelOpenAIAgenticTotalTokens";
     @Metadata(description = "List of tool names called during the agentic loop", javaType = "java.util.List<String>")
     public static final String MCP_TOOL_CALLS = "CamelOpenAIMcpToolCalls";
     @Metadata(description = "Whether the response came directly from a tool with returnDirect=true, "

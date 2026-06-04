@@ -402,8 +402,9 @@ public class OpenAIProducer extends DefaultAsyncProducer {
         Map<String, McpSyncClient> toolClientMap = getEndpoint().getToolClientMap();
         Set<String> returnDirectTools = getEndpoint().getReturnDirectTools();
         int maxIterations = config.getMaxToolIterations();
-        LOG.debug("Starting agentic loop with maxToolIterations={}, available tools: {}", maxIterations,
-                toolClientMap.keySet());
+        Long maxAgenticTokens = config.getMaxAgenticTokens();
+        LOG.debug("Starting agentic loop with maxToolIterations={}, maxAgenticTokens={}, available tools: {}",
+                maxIterations, maxAgenticTokens, toolClientMap.keySet());
 
         // Rebuild the builder from the immutable params so we can accumulate messages
         ChatCompletionCreateParams.Builder paramsBuilder = params.toBuilder();
@@ -412,9 +413,21 @@ public class OpenAIProducer extends DefaultAsyncProducer {
         List<String> toolCallsLog = new ArrayList<>();
         int iteration = 0;
 
+        // Cumulative token usage across all iterations of the loop
+        long agenticPromptTokens = 0;
+        long agenticCompletionTokens = 0;
+        long agenticTotalTokens = 0;
+
         while (iteration < maxIterations) {
             ChatCompletion response = getEndpoint().getClient().chat().completions().create(paramsBuilder.build());
             ChatCompletion.Choice choice = response.choices().get(0);
+
+            if (response.usage().isPresent()) {
+                CompletionUsage usage = response.usage().get();
+                agenticPromptTokens += usage.promptTokens();
+                agenticCompletionTokens += usage.completionTokens();
+                agenticTotalTokens += usage.totalTokens();
+            }
 
             if (!isToolCallsFinishReason(choice)) {
                 // Final LLM response
@@ -429,6 +442,8 @@ public class OpenAIProducer extends DefaultAsyncProducer {
                 exchange.getMessage().setHeader(OpenAIConstants.TOOL_ITERATIONS, iteration);
                 exchange.getMessage().setHeader(OpenAIConstants.MCP_TOOL_CALLS, toolCallsLog);
                 exchange.getMessage().setHeader(OpenAIConstants.MCP_RETURN_DIRECT, false);
+                setAgenticTokenHeaders(exchange.getMessage(), agenticPromptTokens, agenticCompletionTokens,
+                        agenticTotalTokens);
                 if (config.isStoreFullResponse()) {
                     exchange.setProperty(OpenAIConstants.RESPONSE, response);
                 }
@@ -509,6 +524,8 @@ public class OpenAIProducer extends DefaultAsyncProducer {
                 exchange.getMessage().setHeader(OpenAIConstants.TOOL_ITERATIONS, iteration);
                 exchange.getMessage().setHeader(OpenAIConstants.MCP_TOOL_CALLS, toolCallsLog);
                 exchange.getMessage().setHeader(OpenAIConstants.MCP_RETURN_DIRECT, true);
+                setAgenticTokenHeaders(exchange.getMessage(), agenticPromptTokens, agenticCompletionTokens,
+                        agenticTotalTokens);
                 updateConversationHistory(exchange, agenticMessages, directResult.toString());
                 return;
             }
@@ -523,6 +540,15 @@ public class OpenAIProducer extends DefaultAsyncProducer {
                                 .build());
                 paramsBuilder.addMessage(toolMsg);
                 agenticMessages.add(toolMsg);
+            }
+
+            // Enforce the token budget before spending more tokens on another model round-trip
+            if (maxAgenticTokens != null && agenticTotalTokens > maxAgenticTokens) {
+                throw new IllegalStateException(
+                        ("Max agentic tokens (%d) exceeded after %d iteration(s); consumed %d tokens "
+                         + "(prompt=%d, completion=%d). Tools called: %s")
+                                .formatted(maxAgenticTokens, iteration, agenticTotalTokens, agenticPromptTokens,
+                                        agenticCompletionTokens, toolCallsLog));
             }
         }
 
@@ -605,6 +631,13 @@ public class OpenAIProducer extends DefaultAsyncProducer {
             message.setHeader(OpenAIConstants.COMPLETION_TOKENS, usage.completionTokens());
             message.setHeader(OpenAIConstants.TOTAL_TOKENS, usage.totalTokens());
         }
+    }
+
+    private void setAgenticTokenHeaders(
+            Message message, long promptTokens, long completionTokens, long totalTokens) {
+        message.setHeader(OpenAIConstants.AGENTIC_PROMPT_TOKENS, promptTokens);
+        message.setHeader(OpenAIConstants.AGENTIC_COMPLETION_TOKENS, completionTokens);
+        message.setHeader(OpenAIConstants.AGENTIC_TOTAL_TOKENS, totalTokens);
     }
 
     private void updateConversationHistory(

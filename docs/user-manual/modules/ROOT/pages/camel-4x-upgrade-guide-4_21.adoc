@@ -1871,3 +1871,14 @@ transport `from` and the `irc:` `to`. Allowing untrusted senders to drive
 `IrcConstants.IRC_SEND_TO` without such a mapping step is not the intended use
 of the component.
 
+=== camel-openai
+
+A new `maxAgenticTokens` endpoint option bounds the cumulative token usage (prompt + completion, summed across every
+iteration) of the MCP agentic tool-call loop. It is unset by default (unlimited), so existing routes are unaffected.
+When set and the budget is exceeded, the loop is halted before the next model call and an `IllegalStateException` is
+thrown, mirroring the existing `maxToolIterations` behaviour.
+
+The cumulative usage is exposed via three new headers set when the agentic loop completes:
+`CamelOpenAIAgenticPromptTokens`, `CamelOpenAIAgenticCompletionTokens` and `CamelOpenAIAgenticTotalTokens`. The existing
+per-response `CamelOpenAIPromptTokens` / `CamelOpenAICompletionTokens` / `CamelOpenAITotalTokens` headers are unchanged.
+
